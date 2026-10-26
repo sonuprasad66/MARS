@@ -1,0 +1,166 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Channel {
+  WEBSITE
+  NYKAA
+  FLIPKART
+  BLINKIT
+}
+
+enum OrderStatus {
+  CONFIRMED
+  REJECTED
+  FULFILLED
+  CANCELLED
+  RETURNED
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+}
+
+enum JobKind {
+  STOCK_SYNC
+  ERP_DELIVERY
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  sku         String   @unique
+  name        String
+  unitPrice   Decimal  @db.Decimal(10, 2)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  inventory   Inventory?
+  channelListings ChannelListing[]
+  orderLines  OrderLine[]
+  reservations Reservation[]
+  audits      InventoryAudit[]
+}
+
+model Inventory {
+  id        String   @id @default(cuid())
+  productId String   @unique
+  onHand    Int
+  reserved  Int      @default(0)
+  version   Int      @default(0)
+  updatedAt DateTime @updatedAt
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+}
+
+model ChannelListing {
+  id             String  @id @default(cuid())
+  productId      String
+  channel        Channel
+  externalSku    String
+  lastSyncedQty  Int?
+  lastSyncedAt   DateTime?
+  product        Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, channel])
+  @@unique([channel, externalSku])
+}
+
+model Order {
+  id              String      @id @default(cuid())
+  channel         Channel
+  externalOrderId String
+  status          OrderStatus
+  eventTime       DateTime
+  paymentMode     String
+  shippingPincode String?
+  totalAmount     Decimal     @db.Decimal(12, 2)
+  rejectionReason String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  lines           OrderLine[]
+  reservations    Reservation[]
+  jobs            SyncJob[]
+
+  @@unique([channel, externalOrderId])
+  @@index([createdAt])
+  @@index([status, createdAt])
+}
+
+model OrderLine {
+  id        String  @id @default(cuid())
+  orderId   String
+  productId String
+  quantity  Int
+  unitPrice Decimal @db.Decimal(10, 2)
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id])
+
+  @@unique([orderId, productId])
+}
+
+model Reservation {
+  id        String   @id @default(cuid())
+  orderId   String
+  productId String
+  quantity  Int
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  releasedAt DateTime?
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product   Product  @relation(fields: [productId], references: [id])
+
+  @@unique([orderId, productId])
+}
+
+model InventoryAudit {
+  id        String   @id @default(cuid())
+  productId String
+  orderId   String?
+  reason    String
+  deltaOnHand Int
+  deltaReserved Int
+  createdAt DateTime @default(now())
+  product   Product  @relation(fields: [productId], references: [id])
+
+  @@index([productId, createdAt])
+}
+
+model SyncJob {
+  id           String    @id @default(cuid())
+  kind         JobKind
+  channel      Channel?
+  orderId      String?
+  productId    String?
+  desiredQty   Int?
+  inventoryVersion Int?
+  status       JobStatus @default(PENDING)
+  attempts     Int       @default(0)
+  lastError    String?
+  nextAttemptAt DateTime @default(now())
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  order        Order?    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@index([kind, createdAt])
+}
+
+model OutboxEvent {
+  id          String   @id @default(cuid())
+  eventType   String
+  aggregateId String
+  payload     Json
+  publishedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([publishedAt, createdAt])
+  @@unique([eventType, aggregateId])
+}
